@@ -14,8 +14,8 @@ pub enum Reconnect<T>
     where T : Reconnectable {
     
     // In order to change state from Connected to Reconnecting 
-    // we should be able to call reconnect which moves self
-    // So we wrap inner socket by Option
+    // we should be able to call Reconnactable::reconnect which takes self
+    // So we wrap inner socket by Option and use take().unwrap() to get inner
     Connected( #[pin] Option<T>),
 
     Reconnecting( #[pin] <T as Reconnectable>::ConnectFut )
@@ -94,33 +94,5 @@ impl <T> Stream for Reconnect<T>
             self.set(new_state);
         }
 
-
-        // // If we are in reconnection state poll connection future to get a
-        // // new connection
-        // if let Some(connect_fut) = this.connect_fut.get_mut() {
-        //     pin_mut!(connect_fut);
-
-        //     match ready!(connect_fut.poll(cx)) {
-        //         Ok(socket) => { this.inner.set(socket)}
-        //         Err(err) => {
-        //             let connect_fut = this.inner.connect();
-        //             this.connect_fut.set(Some(connect_fut));
-        //         }
-        //     }
-        // }
-
-        // match ready!(this.inner.poll_next(cx)) {
-        //     Some(ready) => {
-        //         match ready {
-        //             Ok(data) => return Poll::Ready(Some(Ok(data))),
-        //             Err(err) => {
-        //                 unimplemented!()
-        //             }
-        //         }
-        //     }
-        //     None => {
-        //         unimplemented!()
-        //     }
-        // }
     }
 }
