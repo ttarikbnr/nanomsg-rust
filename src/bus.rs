@@ -1,12 +1,14 @@
-use std::{pin::Pin, task::{Poll, Context}};
+use std::{pin::Pin, task::{Poll, Context}, io};
 use std::ops::Deref;
 use std::net::SocketAddr;
 use futures::{Sink, Stream, StreamExt};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::{Encoder, Decoder, Framed};
 use bytes::{BytesMut, BufMut, Buf};
 use pin_project::*;
+use super::reconnect::Reconnectable;
+use futures::{FutureExt, future::BoxFuture, TryFutureExt};
 
 use crate::options::SocketOptions;
 
@@ -14,20 +16,20 @@ const BUS_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x70, 0x00
 
 #[pin_project]
 pub struct NanomsgBus {
+    address: Option<String>,
     #[pin]
     inner : tokio_util::codec::Framed<TcpStream, NanomsgBusCodec>
 }
 
 impl NanomsgBus {
-    pub async fn connect<A: ToSocketAddrs>(address: A) -> std::io::Result<Self> {
+    pub async fn connect(address: String) -> std::io::Result<Self> {
         Self::connect_with_socket_options(address, SocketOptions::default()).await
     }
 
-    pub async fn connect_with_socket_options<A>(address: A,
-                                                socket_options: SocketOptions) -> std::io::Result<Self> 
-        where A: ToSocketAddrs {
+    pub async fn connect_with_socket_options(address: String,
+                                             socket_options: SocketOptions) -> std::io::Result<Self> {
 
-        let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
+        let mut tcp_stream = tokio::net::TcpStream::connect(address.clone()).await?;
 
         set_tcp_options(&mut tcp_stream, &socket_options)?;
 
@@ -44,7 +46,9 @@ impl NanomsgBus {
 
         let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(tcp_stream, NanomsgBusCodec::new());
         let framed = Framed::from_parts(framed_parts);
+
         Ok(Self {
+            address: Some(address),
             inner: framed
         })
     }
@@ -75,11 +79,33 @@ impl NanomsgBus {
             let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(stream, NanomsgBusCodec::new());
             let framed = Framed::from_parts(framed_parts);
             Ok((address, NanomsgBus {
+                address : None,
                 inner: framed
             }))
         })))
     }
 }
+
+
+impl Reconnectable for NanomsgBus {
+    type ConnectFut = BoxFuture<'static, Result<Self, (Self, io::Error)>>;
+
+    fn reconnect(self) -> Self::ConnectFut {
+        // Since bind method doesn't return Reconnect<T> 
+        // We can safely unwrap the address here
+        let address = self.address
+                          .clone()
+                          .unwrap();
+
+
+        NanomsgBus::connect(address)
+                    .map_err(|io_err|{
+                        (self, io_err)
+                    })
+                    .boxed()
+    }
+}
+
 
 fn set_tcp_options(tcpstream        : &mut TcpStream,
                    socket_options   : &SocketOptions) -> std::io::Result<()> {
