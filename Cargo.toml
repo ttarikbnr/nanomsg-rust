@@ -1,0 +1,29 @@
+[package]
+authors = ["Tarik Binar <ttarikbnr@gmail.com>"]
+edition = "2018"
+name = "nanomsg-rust"
+version = "0.1.0"
+
+[dependencies]
+bytes = "0.6.0"
+futures = "0.3"
+log = "*"
+ttl_cache = "*"
+pin-project = "1.0.2"
+rand = "0.8.0"
+
+[dependencies.tokio]
+features = ["full"]
+version = "0.3.4"
+
+[dependencies.tokio-util]
+version = "0.5.1"
+default-features = false
+features = ["codec"]
+
+[dev-dependencies]
+anyhow = "*"
+clap = "*"
+env_logger = "0.8.2"
+
+
