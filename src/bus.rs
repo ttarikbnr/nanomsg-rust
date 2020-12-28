@@ -91,6 +91,7 @@ impl Reconnectable for NanomsgBus {
     type ConnectFut = BoxFuture<'static, Result<Self, (Self, io::Error)>>;
 
     fn reconnect(self) -> Self::ConnectFut {
+
         // Since bind method doesn't return Reconnect<T> 
         // We can safely unwrap the address here
         let address = self.address
@@ -103,6 +104,7 @@ impl Reconnectable for NanomsgBus {
                         (self, io_err)
                     })
                     .boxed()
+
     }
 }
 

@@ -2,18 +2,18 @@
 Nanomsg library that have written in pure rust.
 
 ### TODO
-[ ] Protocols
- - [x] Bus
- - [x] Pair
- - [x] Req/Rep
- - [ ] Pubsub
- - [ ] Pipeline
- - [ ] Survey
+ - [ ] Protocols
+   - [x] Bus
+   - [x] Pair
+   - [x] Req/Rep
+   - [ ] Pubsub
+   - [ ] Pipeline
+   - [ ] Survey
 
-[ ] Transport mechanisms
- - [x] Tcp
- - [ ] Ipc
- - [ ] Ws
- - [ ] Inproc
+ - [ ] Transport mechanisms
+   - [x] Tcp
+   - [ ] Ipc
+   - [ ] Ws
+   - [ ] Inproc
 
-[ ] Device
+ - [ ] Device
