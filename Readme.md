@@ -1,4 +1,4 @@
-## Nanomsg-Rust
+## Nanomsg-Rust(WIP)
 Nanomsg library that have written in pure rust.
 
 ### TODO
