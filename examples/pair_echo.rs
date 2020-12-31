@@ -20,22 +20,16 @@ async fn main() {
 async fn listener(address: &str) -> io::Result<()> {
     let mut pair_listener = NanomsgPair::listen(address)
                                          .await?;
-    loop {
-        match pair_listener.next().await {
-            Some(Ok((socket_addr, pair_socket))) => {
-                println!("Incoming pair socket. Address {}", socket_addr);
+    while let Some((socket_addr, pair_socket)) = pair_listener.next()
+                                                              .await
+                                                              .transpose()? {
+        println!("Incoming pair socket. Address {}", socket_addr);
 
-                tokio::spawn(run_echo(pair_socket));
-            }
-            Some(Err(err)) => {
-                return Err(err)
-            }
-            None => {
-                let error = Error::new(ErrorKind::Other, "Pair listener ended unexpectedly.");
-                return Err(error)
-            }
-        }
+        tokio::spawn(run_echo(pair_socket));
     }
+
+    let error = Error::new(ErrorKind::Other, "Pair listener ended unexpectedly.");
+    Err(error)
 }
 
 async fn run_echo(mut pair_socket: NanomsgPair) -> io::Result<()> {
@@ -63,7 +57,7 @@ async fn run_client(address: &str) -> io::Result<()> {
                 .await
                 .transpose()? {
         Some(packet) => {
-            assert_eq!(&packet[..], b"hello");
+            println!("Client Incoming Packet: {}", String::from_utf8_lossy(&packet));
         }
         None => {
             let error = Error::new(ErrorKind::Other, "Client socket ended unexpectedly.");

@@ -31,7 +31,6 @@ impl NanomsgBus {
 
         let mut tcp_stream = tokio::net::TcpStream::connect(address.clone()).await?;
 
-
         socket_options.apply_to_tcpstream(&tcp_stream)?;
 
 
