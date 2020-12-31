@@ -65,7 +65,7 @@ impl <S, F>NanomsgReply<S, F>
         if let Some(listener) = self.listener.as_mut() {
             let (mut tcpstream, _socket_addr) = listener.accept().await?;
 
-            set_tcp_options(&mut tcpstream, &self.socket_options)?;
+            self.socket_options.apply_to_tcpstream(&tcpstream)?;
 
             tcpstream.write_all(&REP_HANDSHAKE_PACKET[..]).await?;
 
@@ -111,17 +111,6 @@ impl <S, F>NanomsgReply<S, F>
     
 }
 
-fn set_tcp_options(tcpstream        : &mut TcpStream,
-                   socket_options   : &SocketOptions) -> io::Result<()> {
-
-    let nodelay = socket_options.get_tcp_nodelay();
-    tcpstream.set_nodelay(nodelay)?;
-
-    let linger = socket_options.get_tcp_linger();
-    tcpstream.set_linger(linger)?;
-
-    Ok(())
-}
 
 fn timeout_err(error_msg: &'static str) -> std::io::Error {
     std::io::Error::new(ErrorKind::TimedOut, error_msg)

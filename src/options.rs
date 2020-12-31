@@ -73,4 +73,15 @@ impl SocketOptions {
     pub fn set_tcp_linger(&mut self, tcp_linger: Option<Duration>) {
         self.tcp_linger = tcp_linger;
     }
+
+    pub fn apply_to_tcpstream(&self,
+                              tcpstream: &tokio::net::TcpStream) -> std::io::Result<()> {
+        let nodelay = self.get_tcp_nodelay();
+        tcpstream.set_nodelay(nodelay)?;
+
+        let linger = self.get_tcp_linger();
+        tcpstream.set_linger(linger)?;
+
+        Ok(())
+    }
 }

@@ -29,7 +29,7 @@ impl NanomsgPair {
 
         let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
 
-        set_tcp_options(&mut tcp_stream, &socket_options)?;
+        socket_options.apply_to_tcpstream(&tcp_stream)?;
 
 
         tcp_stream.write_all(&PAIR_HANDSHAKE_PACKET[..]).await?;
@@ -84,19 +84,6 @@ impl NanomsgPair {
     }
 }
 
-
-
-fn set_tcp_options(tcpstream        : &mut TcpStream,
-                   socket_options   : &SocketOptions) -> std::io::Result<()> {
-
-    let nodelay = socket_options.get_tcp_nodelay();
-    tcpstream.set_nodelay(nodelay)?;
-
-    let linger = socket_options.get_tcp_linger();
-    tcpstream.set_linger(linger)?;
-
-    Ok(())
-}
 
 
 impl Stream for NanomsgPair {

@@ -179,17 +179,6 @@ fn spawn_background_task(address                 : String,
     }
 }
 
-fn set_socket_options(socket         : &mut TcpStream,
-                      socket_options : &SocketOptions) -> io::Result<()>{
-
-    let nodelay = socket_options.get_tcp_nodelay();
-    socket.set_nodelay(nodelay)?;
-
-    let linger = socket_options.get_tcp_linger();
-    socket.set_linger(linger)?;
-
-    Ok(())
-}
 
 async fn handshake(socket: &mut TcpStream) -> io::Result<()> {
     socket.write_all(&REQ_HANDSHAKE_PACKET[..]).await?;
@@ -302,8 +291,9 @@ impl NanomsgRequestStreamSink {
     pub async fn connect<A: ToSocketAddrs>(address          : A,
                                            socket_options   : &SocketOptions) -> std::io::Result<Self> {
         let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
-        set_socket_options(&mut tcp_stream, socket_options)?;
-        
+
+        socket_options.apply_to_tcpstream(&tcp_stream)?;
+
         tokio::time::timeout(socket_options.get_connect_timeout(),
                              handshake(&mut tcp_stream)).await??;
 

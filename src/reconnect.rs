@@ -5,7 +5,7 @@ use std::ops::Deref;
 
 pub trait Reconnectable: Sized{
     // Since there is a possibility of failure of reconnnection
-    // We should get underlying socket to try again in case of an Error
+    // We should get underlying socket back to try again in case of an Error
     type ConnectFut : Future<Output = Result< Self, (Self, std::io::Error)>> + Unpin;
 
     // TODO: how can we make this to take by ref
@@ -103,8 +103,9 @@ impl <T> Stream for Reconnect<T>
 }
 
 
-// Here we are just delegating to inner types sink methods.
-// We don't drive reconnection mechanism
+// Here we are just delegating to inner type's sink methods.
+// We don't drive reconnection mechanism here so user must always
+// poll stream even if there is no need to receive.
 impl <I, T> Sink<I> for Reconnect<T> 
     where I : Deref<Target=[u8]>,
           T : Reconnectable,
@@ -120,15 +121,15 @@ impl <I, T> Sink<I> for Reconnect<T>
                 match inner {
                     Some(socket) => {
                         pin_mut!(socket);
-                        return socket.poll_ready(cx)
+                        socket.poll_ready(cx)
                     }
                     None => {
-                        return Poll::Pending
+                        Poll::Pending
                     }
                 }
             }
             ReconnectProj::Reconnecting(_) => {
-                return Poll::Pending
+                Poll::Pending
             }
         }
     }
@@ -140,17 +141,17 @@ impl <I, T> Sink<I> for Reconnect<T>
                 match inner {
                     Some(socket) => {
                         pin_mut!(socket);
-                        return socket.start_send(item)
+                        socket.start_send(item)
                     }
                     None => {
                         // If we are in reconnect phase item will be dropped
-                        return Ok(())
+                        Ok(())
                     }
                 }
             }
             ReconnectProj::Reconnecting(_) => {
                 // If we are in reconnect phase item will be dropped
-                return Ok(())
+                Ok(())
             }
         }
     }
@@ -164,15 +165,15 @@ impl <I, T> Sink<I> for Reconnect<T>
                 match inner {
                     Some(socket) => {
                         pin_mut!(socket);
-                        return socket.poll_flush(cx)
+                        socket.poll_flush(cx)
                     }
                     None => {
-                        return Poll::Pending
+                        Poll::Pending
                     }
                 }
             }
             ReconnectProj::Reconnecting(_) => {
-                return Poll::Pending
+                Poll::Pending
             }
         }
     }
@@ -186,15 +187,15 @@ impl <I, T> Sink<I> for Reconnect<T>
                 match inner {
                     Some(socket) => {
                         pin_mut!(socket);
-                        return socket.poll_close(cx)
+                        socket.poll_close(cx)
                     }
                     None => {
-                        return Poll::Pending
+                        Poll::Pending
                     }
                 }
             }
             ReconnectProj::Reconnecting(_) => {
-                return Poll::Pending
+                Poll::Pending
             }
         }
     }

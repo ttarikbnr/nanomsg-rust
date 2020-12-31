@@ -31,7 +31,8 @@ impl NanomsgBus {
 
         let mut tcp_stream = tokio::net::TcpStream::connect(address.clone()).await?;
 
-        set_tcp_options(&mut tcp_stream, &socket_options)?;
+
+        socket_options.apply_to_tcpstream(&tcp_stream)?;
 
 
         tcp_stream.write_all(&BUS_HANDSHAKE_PACKET[..]).await?;
@@ -107,19 +108,6 @@ impl Reconnectable for NanomsgBus {
 
     }
 }
-
-
-fn set_tcp_options(tcpstream        : &mut TcpStream,
-                   socket_options   : &SocketOptions) -> std::io::Result<()> {
-    let nodelay = socket_options.get_tcp_nodelay();
-    tcpstream.set_nodelay(nodelay)?;
-
-    let linger = socket_options.get_tcp_linger();
-    tcpstream.set_linger(linger)?;
-
-    Ok(())
-}
-
 
 
 impl Stream for NanomsgBus {
