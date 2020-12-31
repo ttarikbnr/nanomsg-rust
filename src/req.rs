@@ -67,10 +67,13 @@ enum BackgroundTaskState {
 }
 
 pub struct NanomsgRequest {
+
     #[allow(unused)]
     address                     : String,
     request_chan                : mpsc::UnboundedSender<Request>,
     background_task_cancel_tx   : Option<oneshot::Sender<()>>,
+
+    #[allow(unused)]
     socket_options              : SocketOptions,
     bg_task_state               : BackgroundTaskStateAtomic,
 }
@@ -113,12 +116,11 @@ impl NanomsgRequest {
 
         match bg_task_state {
             Starting | Reconnecting => {
-                let wait = self.socket_options.get_reconnect_try_interval();
                 if let Err(err) = self.request_chan.send(request) {
                     let err_msg = format!("Couldn't send request to background task. {}", err);
                     future::Either::Left(future::err(other_err(err_msg)))
                 } else {
-                    future::Either::Right(reply_fut(rx, Some(wait)))
+                    future::Either::Right(reply_fut(rx))
                 }
             }
             Connected => {
@@ -126,7 +128,7 @@ impl NanomsgRequest {
                     let err_msg = format!("Couldn't send request to background task. {}", err);
                     future::Either::Left(future::err(other_err(err_msg)))
                 } else {
-                    future::Either::Right(reply_fut(rx, None))
+                    future::Either::Right(reply_fut(rx))
                 }
             }
         }
@@ -142,18 +144,10 @@ impl Drop for NanomsgRequest {
 }
 
 
-async fn reply_fut(rx       : oneshot::Receiver<Vec<u8>>,
-                   wait_dur  : Option<std::time::Duration>) -> io::Result<Vec<u8>> {
-    if let Some(wait_dur) =  wait_dur {
-        tokio::time::sleep(wait_dur).await;
-        rx.await.map_err(|err| {
-            other_err(format!("Got error on reply channel. {}", err))
-        })
-    } else {
-        rx.await.map_err(|err| {
-            other_err(format!("Got error on reply channel. {}", err))
-        })
-    }
+async fn reply_fut(rx       : oneshot::Receiver<Vec<u8>>) -> io::Result<Vec<u8>> {
+    rx.await.map_err(|err| {
+        other_err(format!("Got error on reply channel. {}", err))
+    })
 }
 
 fn spawn_background_task(address                 : String,
@@ -196,7 +190,7 @@ async fn handshake(socket: &mut TcpStream) -> io::Result<()> {
 fn produce_request_id() -> u32 {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    rng.gen::<u32>()
+    rng.gen::<u32>() & 0x7FFFFFFF
 }
 
 fn other_err<E>(error_msg: E) -> std::io::Error 
@@ -234,11 +228,9 @@ async fn run_socket_task(address            : String,
         loop {
             tokio::select! {
                 Request{payload, reply_sender} = request_recv.select_next_some() => {
-                    // reply_sender.send(b"reply".to_vec());
-                    
-                    otf_requests.insert(request_id, reply_sender);
-                    // log::info!("Sending request_id: {}", request_id);
                     advance_request_id(&mut request_id);
+
+                    otf_requests.insert(request_id, reply_sender);
 
                     if let Err(err) = request_sock.send((request_id, payload)).await {
                         log::error!("Got error while sending to request socket. {}", err);
@@ -249,9 +241,7 @@ async fn run_socket_task(address            : String,
                 incoming = request_sock.next() => {
                     match incoming {
                         Some(Ok((inc_request_id, payload))) => {
-                            
-                            if let Some(sender) = otf_requests.remove(&(inc_request_id - 1)) {
-                                // log::info!("Sending reply");
+                            if let Some(sender) = otf_requests.remove(&(inc_request_id)) {
                                 let _ = sender.send(payload);
                             }
                         }
