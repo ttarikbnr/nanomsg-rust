@@ -216,7 +216,7 @@ async fn run_socket_task(address            : String,
     use futures::{StreamExt, SinkExt};
     let mut request_recv = request_recv.fuse();
     'outer: loop {
-        let mut request_sock = match NanomsgRequestStreamSink::connect(address.clone(), &socket_options).await {
+        let mut request_sock = match NanomsgRequestSocket::connect(address.clone(), &socket_options).await {
             Ok(request_socket) => {
                 bg_task_state.set_connected();
                 request_socket
@@ -230,7 +230,6 @@ async fn run_socket_task(address            : String,
         };
 
         let mut otf_requests = HashMap::new();
-    
         let mut request_id = produce_request_id();
         loop {
             tokio::select! {
@@ -240,6 +239,7 @@ async fn run_socket_task(address            : String,
                     otf_requests.insert(request_id, reply_sender);
                     // log::info!("Sending request_id: {}", request_id);
                     advance_request_id(&mut request_id);
+
                     if let Err(err) = request_sock.send((request_id, payload)).await {
                         log::error!("Got error while sending to request socket. {}", err);
                         bg_task_state.set_reconnecting();
@@ -282,12 +282,12 @@ fn advance_request_id(request_id: &mut u32) {
 }
 
 #[pin_project]
-struct NanomsgRequestStreamSink {
+struct NanomsgRequestSocket {
     #[pin]
     inner           : tokio_util::codec::Framed<TcpStream, NanomsgRequestCodec>,
 }
 
-impl NanomsgRequestStreamSink {
+impl NanomsgRequestSocket {
     pub async fn connect<A: ToSocketAddrs>(address          : A,
                                            socket_options   : &SocketOptions) -> std::io::Result<Self> {
         let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
@@ -306,7 +306,7 @@ impl NanomsgRequestStreamSink {
 }
 
 
-impl Stream for NanomsgRequestStreamSink {
+impl Stream for NanomsgRequestSocket {
     type Item = std::io::Result<(u32, Vec<u8>)>;
 
     fn poll_next(
@@ -319,7 +319,7 @@ impl Stream for NanomsgRequestStreamSink {
 }
 
 
-impl <I> Sink<(u32, I)> for NanomsgRequestStreamSink 
+impl <I> Sink<(u32, I)> for NanomsgRequestSocket 
     where I: Deref<Target=[u8]>{
     type Error = std::io::Error;
 
