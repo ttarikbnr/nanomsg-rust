@@ -29,6 +29,7 @@ async fn listener(address: &str) -> io::Result<()> {
     }
 
     let error = Error::new(ErrorKind::Other, "Pair listener ended unexpectedly.");
+
     Err(error)
 }
 
@@ -43,8 +44,10 @@ async fn run_echo(mut pair_socket: NanomsgPair) -> io::Result<()> {
             break
         }
     }
+
     let error = Error::new(ErrorKind::Other, "None came.");
-    return Err(error)
+
+    Err(error)
 }
 
 async fn run_client(address: &str) -> io::Result<()> {

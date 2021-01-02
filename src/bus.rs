@@ -1,8 +1,6 @@
-use std::{pin::Pin, task::{Poll, Context}, io};
-use std::ops::Deref;
-use std::net::SocketAddr;
+use std::{pin::Pin, task::{Poll, Context}, io, ops::Deref, net::SocketAddr};
 use futures::{Sink, Stream, StreamExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::{Encoder, Decoder, Framed};
 use bytes::{BytesMut, BufMut, Buf};
@@ -22,12 +20,12 @@ pub struct NanomsgBus {
 }
 
 impl NanomsgBus {
-    pub async fn connect(address: String) -> std::io::Result<Self> {
+    pub async fn connect(address: String) -> io::Result<Self> {
         Self::connect_with_socket_options(address, SocketOptions::default()).await
     }
 
     pub async fn connect_with_socket_options(address: String,
-                                             socket_options: SocketOptions) -> std::io::Result<Self> {
+                                             socket_options: SocketOptions) -> io::Result<Self> {
 
         let mut tcp_stream = tokio::net::TcpStream::connect(address.clone()).await?;
 
@@ -41,7 +39,7 @@ impl NanomsgBus {
         tcp_stream.read_exact(&mut incoming_handshake).await?;
 
         if incoming_handshake != BUS_HANDSHAKE_PACKET {
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
+            return Err(io::Error::from(io::ErrorKind::InvalidData))
         }
 
         let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(tcp_stream, NanomsgBusCodec::new());
@@ -53,16 +51,10 @@ impl NanomsgBus {
         })
     }
 
-    pub async fn listen(address: &str) -> std::io::Result<impl Stream<Item = std::io::Result<(SocketAddr, NanomsgBus)>> + Unpin> {
-        let tcp_socket = tokio::net::TcpSocket::new_v4()?;
-        let socket_addr = if let Ok(addr) = address.parse() {
-            addr
-        } else {
-            return Err(std::io::Error::from(std::io::ErrorKind::AddrNotAvailable))
-        };
+    pub async fn listen<A>(address: A) -> io::Result<impl Stream<Item = io::Result<(SocketAddr, NanomsgBus)>> + Unpin>
+        where A: ToSocketAddrs {
 
-        tcp_socket.bind(socket_addr)?;
-        let listener = tcp_socket.listen(1024)?;
+        let listener = tokio::net::TcpListener::bind(address).await?;
 
         Ok(Box::pin(listener.then(|stream| async {
             let mut stream = stream?;
@@ -73,7 +65,7 @@ impl NanomsgBus {
             stream.read_exact(&mut incoming_handshake).await?;
     
             if incoming_handshake != BUS_HANDSHAKE_PACKET {
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
+                return Err(io::Error::from(io::ErrorKind::InvalidData))
             }
 
             let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(stream, NanomsgBusCodec::new());
@@ -110,7 +102,7 @@ impl Reconnectable for NanomsgBus {
 
 
 impl Stream for NanomsgBus {
-    type Item = std::io::Result<Vec<u8>>;
+    type Item = io::Result<Vec<u8>>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -124,7 +116,7 @@ impl Stream for NanomsgBus {
 
 impl <I> Sink<I> for NanomsgBus 
     where I: Deref<Target=[u8]>{
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn poll_ready(
         self: Pin<&mut Self>,
@@ -176,7 +168,7 @@ impl NanomsgBusCodec {
 
 impl <T>Encoder<T> for NanomsgBusCodec 
     where T: std::ops::Deref<Target = [u8]> {
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
         dst.reserve(item.len() + 8);
@@ -188,7 +180,7 @@ impl <T>Encoder<T> for NanomsgBusCodec
 
 impl Decoder for NanomsgBusCodec {
     type Item = Vec<u8>;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         use std::mem::replace;

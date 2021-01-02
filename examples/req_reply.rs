@@ -5,7 +5,7 @@ use std::io;
 #[tokio::main]
 async fn main() {
     tokio::spawn( async {
-        if let Err(err) = run_reply_task(4536).await {
+        if let Err(err) = run_reply_task("localhost:4546").await {
             eprintln!("Listener Err: {}", err);
         }
     });
@@ -18,15 +18,15 @@ async fn main() {
 }
 
 
-async fn run_reply_task(port: u16) -> io::Result<()> {
-    let mut reply_socket = NanomsgReply::new(port, handle_request, false);
-    reply_socket.bind().await?;
+async fn run_reply_task(address: &str) -> io::Result<()> {
+    let mut reply_socket = NanomsgReply::new(handle_request, false);
+    reply_socket.bind(address).await?;
     reply_socket.serve().await
 }
 
 async fn handle_request(req: Vec<u8>) -> Vec<u8> {
     println!("Reply incoming request: {}", String::from_utf8_lossy(&req));
-    return b"pong".to_vec()
+    b"pong".to_vec()
 }
 
 async fn run_request_task(address: &str) -> io::Result<()> {

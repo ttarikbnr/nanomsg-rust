@@ -1,4 +1,4 @@
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::prelude::*;
 use tokio::time::timeout;
 use std::{ops::Deref, pin::Pin, task::{Context, Poll}, time::Duration};
@@ -16,7 +16,6 @@ const REQ_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x30, 0x00
 
 
 pub struct NanomsgReply<S, F> {
-    binding_port        : u16,
     listener            : Option<TcpListener>,
     service_fn          : S,
     spawn_local         : bool,
@@ -30,22 +29,18 @@ impl <S, F>NanomsgReply<S, F>
     where S: FnMut(Vec<u8>) -> F + Clone + Send + 'static,
           F: Future<Output=Vec<u8>> + Send + 'static {
 
-    pub fn new(binding_port : u16,
-               service_fn   : S,
+    pub fn new(service_fn   : S,
                spawn_local  : bool) -> Self {
 
-        Self::new_with_socket_options(binding_port,
-                                      service_fn,
+        Self::new_with_socket_options(service_fn,
                                       SocketOptions::default(),
                                       spawn_local)
     }
 
-    pub fn new_with_socket_options(binding_port     : u16,
-                                   service_fn       : S,
+    pub fn new_with_socket_options(service_fn       : S,
                                    socket_options   : SocketOptions,
                                    spawn_local      : bool) -> Self {
         Self {
-            binding_port,
             service_fn,
             listener        : None,
             spawn_local,
@@ -54,8 +49,9 @@ impl <S, F>NanomsgReply<S, F>
         }
     }
 
-    pub async fn bind(&mut self) -> std::io::Result<()> {
-        let listener = TcpListener::bind(("0.0.0.0", self.binding_port)).await?;
+    pub async fn bind<A>(&mut self, address: A) -> std::io::Result<()> 
+        where A: ToSocketAddrs{
+        let listener = TcpListener::bind(address).await?;
 
         self.listener = Some(listener);
         Ok(())

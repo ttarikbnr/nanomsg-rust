@@ -1,7 +1,7 @@
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use futures::{Sink, Stream, StreamExt};
-use std::{pin::Pin, task::{Poll, Context}};
+use std::{io, pin::Pin, task::{Poll, Context}};
 use bytes::{BytesMut, BufMut, Buf};
 use pin_project::*;
 use tokio_util::codec::{Encoder, Decoder, Framed};
@@ -19,12 +19,12 @@ pub struct NanomsgPair {
 }
 
 impl NanomsgPair {
-    pub async fn connect<A: ToSocketAddrs>(address: A) -> std::io::Result<Self> {
+    pub async fn connect<A: ToSocketAddrs>(address: A) -> io::Result<Self> {
         Self::connect_with_socket_options(address, SocketOptions::default()).await
     }
 
     pub async fn connect_with_socket_options<A>(address: A,
-                                                socket_options: SocketOptions) -> std::io::Result<Self>
+                                                socket_options: SocketOptions) -> io::Result<Self>
         where A: ToSocketAddrs {
 
         let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
@@ -38,7 +38,7 @@ impl NanomsgPair {
         tcp_stream.read_exact(&mut incoming_handshake).await?;
 
         if incoming_handshake != PAIR_HANDSHAKE_PACKET {
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
+            return Err(io::Error::from(io::ErrorKind::InvalidData))
         }
 
         let codec = NanomsgPairCodec::new();
@@ -51,16 +51,10 @@ impl NanomsgPair {
     }
 
 
-    pub async fn listen(address: &str) -> std::io::Result<impl Stream<Item = std::io::Result<(SocketAddr, NanomsgPair)>> + Unpin> {
-        let tcp_socket = tokio::net::TcpSocket::new_v4()?;
-        let socket_addr = if let Ok(addr) = address.parse() {
-            addr
-        } else {
-            return Err(std::io::Error::from(std::io::ErrorKind::AddrNotAvailable))
-        };
+    pub async fn listen<A>(address: A) -> io::Result<impl Stream<Item = io::Result<(SocketAddr, NanomsgPair)>> + Unpin>
+        where A: ToSocketAddrs {
 
-        tcp_socket.bind(socket_addr)?;
-        let listener = tcp_socket.listen(1024)?;
+        let listener = tokio::net::TcpListener::bind(address).await?;
 
         Ok(Box::pin(listener.then(|stream| async {
             let mut stream = stream?;
@@ -71,7 +65,7 @@ impl NanomsgPair {
             stream.read_exact(&mut incoming_handshake).await?;
     
             if incoming_handshake != PAIR_HANDSHAKE_PACKET {
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidData))
+                return Err(io::Error::from(io::ErrorKind::InvalidData))
             }
             let codec = NanomsgPairCodec::new();
 
@@ -87,7 +81,7 @@ impl NanomsgPair {
 
 
 impl Stream for NanomsgPair {
-    type Item = std::io::Result<Vec<u8>>;
+    type Item = io::Result<Vec<u8>>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -101,7 +95,7 @@ impl Stream for NanomsgPair {
 
 impl <I> Sink<I> for NanomsgPair 
     where I: Deref<Target=[u8]>{
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn poll_ready(
         self: Pin<&mut Self>,
@@ -152,7 +146,7 @@ impl NanomsgPairCodec {
 
 impl <T>Encoder<T> for NanomsgPairCodec 
     where T: std::ops::Deref<Target = [u8]> {
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
         dst.reserve(item.len() + 8);
@@ -164,7 +158,7 @@ impl <T>Encoder<T> for NanomsgPairCodec
 
 impl Decoder for NanomsgPairCodec {
     type Item = Vec<u8>;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         use std::mem::replace;
