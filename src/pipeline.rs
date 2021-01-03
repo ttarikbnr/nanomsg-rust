@@ -2,16 +2,15 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::{UnboundedSender,
                         UnboundedReceiver,
-                        unbounded_channel};
-use futures::{Sink, Stream, StreamExt, SinkExt};
-use std::{io, pin::Pin, task::{Poll, Context}};
+                        unbounded_channel,
+                        error::SendError};
+use tokio::time::sleep;
+use futures::{StreamExt, SinkExt};
+use std::io;
 use bytes::{BytesMut, BufMut, Buf};
-use pin_project::*;
 use tokio_util::codec::{Encoder, Decoder, Framed, FramedParts};
-use std::ops::Deref;
-use std::net::SocketAddr;
 use super::options::SocketOptions;
-use std::sync::Arc;
+
 
 const PIPELINE_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x50, 0x00, 0x00];
 
@@ -19,7 +18,7 @@ const PIPELINE_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x50,
 pub struct NanomsgPush {
     ind    : usize,
     // Vector of frameds
-    senders : Vec<UnboundedSender<Arc<Vec<u8>>>>,
+    senders : Vec<UnboundedSender<Vec<u8>>>,
 }
 
 
@@ -59,12 +58,45 @@ impl NanomsgPush {
         Ok(())
     }
 
+
+    pub fn push(&mut self, packet: Vec<u8>) -> io::Result<()> {
+        let mut item = Some(packet);
+        loop {
+            let socket_count = self.senders.len();
+
+            if socket_count == 0 {
+                return Ok(())
+            } else if socket_count ==  1 {
+                if self.senders[0]
+                       .send(item.take().unwrap())
+                       .is_err() {
+
+                    self.senders.remove(0);
+
+                    return Ok(())
+                }
+            } else if let Err(SendError(packet)) = self.senders[self.ind]
+                                                       .send(item.take().unwrap()) {
+
+                item = Some(packet);
+                self.senders.remove(self.ind);
+
+                self.ind = (self.ind + 1) % socket_count - 1;
+
+                continue
+            } else {
+                self.ind = (self.ind + 1) % socket_count;
+                return Ok(())
+            }
+        }
+
+    }
 }
 
 fn spawn_push_socket<A>(address         : Option<A>,
                         socket_options  : SocketOptions,
                         framed          : Framed<TcpStream, NanomsgPipelineCodec>,
-                        recv            : UnboundedReceiver<Arc<Vec<u8>>>)
+                        recv            : UnboundedReceiver<Vec<u8>>)
     where A: ToSocketAddrs + Send + Sync + 'static {
 
     // TODO spawn socket
@@ -91,10 +123,9 @@ fn spawn_push_socket<A>(address         : Option<A>,
                             continue 'outer
                         }
                         Err(err) => {
-                            log::error!("Can't reconnect to pull socket.");
-
+                            log::error!("Can't reconnect to pull socket. {}", err);
                             // When reconnection fails take a breath
-                            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                            sleep(socket_options.get_reconnect_try_interval()).await;
 
                             continue 'reconnect
                         }
@@ -135,12 +166,12 @@ async fn connect_push<A>(address        : &A,
 
 struct NanomsgPushSocket {
     framed  : Framed<TcpStream, NanomsgPipelineCodec>,
-    recv    : UnboundedReceiver<Arc<Vec<u8>>>
+    recv    : UnboundedReceiver<Vec<u8>>
 }
 
 impl NanomsgPushSocket {
     fn new(framed   : Framed<TcpStream, NanomsgPipelineCodec>,
-           recv     : UnboundedReceiver<Arc<Vec<u8>>>) -> Self {
+           recv     : UnboundedReceiver<Vec<u8>>) -> Self {
         Self {
             framed,
             recv
@@ -149,7 +180,7 @@ impl NanomsgPushSocket {
 
 
     // Return true if reconnection is neccessary
-    async fn run(mut self) -> Option<UnboundedReceiver<Arc<Vec<u8>>>> {
+    async fn run(mut self) -> Option<UnboundedReceiver<Vec<u8>>> {
         // Read from recv
             // Write to socket
         while let Some(packet) = self.recv.next().await {
@@ -163,119 +194,6 @@ impl NanomsgPushSocket {
         }
 
         return None
-    }
-}
-
-
-
-#[pin_project]
-pub struct NanomsgPipeline {
-    #[pin]
-    inner : Framed<TcpStream, NanomsgPipelineCodec>
-}
-
-impl NanomsgPipeline {
-    pub async fn connect<A: ToSocketAddrs>(address: A) -> io::Result<Self> {
-        Self::connect_with_socket_options(address, SocketOptions::default()).await
-    }
-
-    pub async fn connect_with_socket_options<A>(address: A,
-                                                socket_options: SocketOptions) -> io::Result<Self>
-        where A: ToSocketAddrs {
-
-        let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
-
-        socket_options.apply_to_tcpstream(&tcp_stream)?;
-
-
-        tcp_stream.write_all(&PIPELINE_HANDSHAKE_PACKET[..]).await?;
-        
-        let mut incoming_handshake= [0u8; 8];
-        tcp_stream.read_exact(&mut incoming_handshake).await?;
-
-        if incoming_handshake != PIPELINE_HANDSHAKE_PACKET {
-            return Err(io::Error::from(io::ErrorKind::InvalidData))
-        }
-
-        let codec = NanomsgPipelineCodec::new();
-
-        let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, codec);
-        let framed = Framed::from_parts(framed_parts);
-        Ok(Self {
-            inner: framed
-        })
-    }
-
-    pub async fn listen<A>(address: A) -> io::Result<impl Stream<Item = io::Result<(SocketAddr, NanomsgPipeline)>> + Unpin>
-        where A: ToSocketAddrs {
-
-        let listener = tokio::net::TcpListener::bind(address).await?;
-
-        Ok(Box::pin(listener.then(|stream| async {
-            let mut stream = stream?;
-            stream.write_all(&PIPELINE_HANDSHAKE_PACKET[..]).await?;
-            let address = stream.peer_addr()?;
-
-            let mut incoming_handshake= [0u8; 8];
-            stream.read_exact(&mut incoming_handshake).await?;
-    
-            if incoming_handshake != PIPELINE_HANDSHAKE_PACKET {
-                return Err(io::Error::from(io::ErrorKind::InvalidData))
-            }
-            let codec = NanomsgPipelineCodec::new();
-
-            let framed_parts = FramedParts::new::<&[u8]>(stream, codec);
-            let framed = Framed::from_parts(framed_parts);
-            Ok((address, NanomsgPipeline {
-                inner: framed
-            }))
-        })))
-    }
-}
-
-impl Stream for NanomsgPipeline {
-    type Item = io::Result<Vec<u8>>;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        this.inner.poll_next(cx)
-    }
-}
-
-impl <I> Sink<I> for NanomsgPipeline 
-    where I: Deref<Target=[u8]>{
-    type Error = io::Error;
-
-    fn poll_ready(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>
-    ) -> Poll<Result<(), Self::Error>> {
-        let this = self.project();
-        <Framed<TcpStream, NanomsgPipelineCodec> as Sink<I>>::poll_ready(this.inner, cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: I) -> Result<(), Self::Error> {
-        let this = self.project();
-        this.inner.start_send(item)
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>
-    ) -> Poll<Result<(), Self::Error>> {
-        let this = self.project();
-        <Framed<TcpStream, NanomsgPipelineCodec> as Sink<I>>::poll_flush(this.inner, cx)
-    }
-
-    fn poll_close(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>
-    ) -> Poll<Result<(), Self::Error>> {
-        let this = self.project();
-        <Framed<TcpStream, NanomsgPipelineCodec> as Sink<I>>::poll_close(this.inner, cx)
     }
 }
 
