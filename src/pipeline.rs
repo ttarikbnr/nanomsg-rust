@@ -193,7 +193,7 @@ impl NanomsgPushSocket {
             }
         }
 
-        return None
+        None
     }
 }
 
