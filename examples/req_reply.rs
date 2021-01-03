@@ -11,7 +11,7 @@ async fn main() {
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    
+
     if let Err(err) = run_request_task("localhost:4546").await {
         eprintln!("Client Err: {}", err);
     }
