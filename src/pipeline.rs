@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{UnboundedSender,
                         error::SendError};
 use tokio::time::sleep;
 use futures::{StreamExt, SinkExt};
-use std::io;
+use std::{io, collections::VecDeque };
 use bytes::{BytesMut, BufMut, Buf};
 use tokio_util::codec::{Encoder, Decoder, Framed, FramedParts};
 use super::options::SocketOptions;
@@ -16,17 +16,14 @@ const PIPELINE_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x50,
 
 
 pub struct NanomsgPush {
-    ind    : usize,
-    // Vector of frameds
-    senders : Vec<UnboundedSender<Vec<u8>>>,
+    senders : VecDeque<UnboundedSender<Vec<u8>>>,
 }
 
 
 impl NanomsgPush {
     pub fn new() -> Self {
         Self {
-            ind     : 0,
-            senders : Vec::new()
+            senders : VecDeque::new()
         }
     }
 
@@ -49,7 +46,7 @@ impl NanomsgPush {
 
         let (sender, recv) = unbounded_channel();
 
-        self.senders.push(sender);
+        self.senders.push_front(sender);
 
         spawn_push_socket(Some(address),
                           socket_options,
@@ -61,35 +58,29 @@ impl NanomsgPush {
 
     pub fn push(&mut self, packet: Vec<u8>) -> io::Result<()> {
         let mut item = Some(packet);
+
         loop {
-            let socket_count = self.senders.len();
-
-            if socket_count == 0 {
-                return Ok(())
-            } else if socket_count ==  1 {
-                if self.senders[0]
-                       .send(item.take().unwrap())
-                       .is_err() {
-
-                    self.senders.remove(0);
-
-                    return Ok(())
+            // Pop a sender from back of the double ended vec
+            if let Some(sender) = self.senders.pop_back() {
+                
+                // In case of send error get back the packet and drop the sender
+                if let Err(SendError(packet)) = sender.send(item.take()
+                                                                .unwrap()) {// Unwrapping here is ok
+                    item = Some(packet);
+                    // Try sending with another sender
+                    continue
                 }
-            } else if let Err(SendError(packet)) = self.senders[self.ind]
-                                                       .send(item.take().unwrap()) {
 
-                item = Some(packet);
-                self.senders.remove(self.ind);
+                self.senders.push_front(sender);
 
-                self.ind = (self.ind + 1) % socket_count - 1;
 
-                continue
+                return Ok(())
             } else {
-                self.ind = (self.ind + 1) % socket_count;
+
+                // We don't have any available socket
                 return Ok(())
             }
         }
-
     }
 }
 
