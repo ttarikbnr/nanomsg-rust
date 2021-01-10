@@ -10,11 +10,12 @@ use std::{sync::Arc, io, collections::VecDeque };
 use tokio_util::codec::{ Framed, FramedParts};
 use tokio::sync::Mutex;
 use super::options::SocketOptions;
-use super::codec::Codec;
+use super::size_payload_codec::SizePayloadCodec;
 
 const PIPELINE_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x50, 0x00, 0x00];
 
 type Senders = Arc<Mutex<VecDeque<UnboundedSender<Vec<u8>>>>>;
+
 pub struct NanomsgPush {
     senders : Senders,
     bound   : bool
@@ -111,12 +112,12 @@ impl NanomsgPush {
 }
 
 struct NanomsgPushSocket {
-    framed  : Framed<TcpStream, Codec>,
+    framed  : Framed<TcpStream, SizePayloadCodec>,
     recv    : UnboundedReceiver<Vec<u8>>
 }
 
 impl NanomsgPushSocket {
-    fn new(framed   : Framed<TcpStream, Codec>,
+    fn new(framed   : Framed<TcpStream, SizePayloadCodec>,
            recv     : UnboundedReceiver<Vec<u8>>) -> Self {
         Self {
             framed,
@@ -194,7 +195,7 @@ impl NanomsgPushListener {
 }
 
 async fn connect_push<A>(address        : &A,
-                         socket_options : &SocketOptions) -> io::Result<Framed<TcpStream, Codec>>
+                         socket_options : &SocketOptions) -> io::Result<Framed<TcpStream, SizePayloadCodec>>
 where A: ToSocketAddrs + Send + Sync + 'static {
     let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
 
@@ -209,7 +210,7 @@ where A: ToSocketAddrs + Send + Sync + 'static {
     return Err(io::Error::from(io::ErrorKind::InvalidData))
     }
 
-    let codec = Codec::new();
+    let codec = SizePayloadCodec::new();
 
     let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, codec);
     Ok(Framed::from_parts(framed_parts))
@@ -217,7 +218,7 @@ where A: ToSocketAddrs + Send + Sync + 'static {
 
 fn spawn_push_socket<A>(address         : Option<A>,
                         socket_options  : SocketOptions,
-                        framed          : Framed<TcpStream, Codec>,
+                        framed          : Framed<TcpStream, SizePayloadCodec>,
                         recv            : UnboundedReceiver<Vec<u8>>)
 where A: ToSocketAddrs + Send + Sync + 'static {
 
@@ -262,7 +263,7 @@ where A: ToSocketAddrs + Send + Sync + 'static {
 }
 
 async fn accept_push(mut tcp_stream: TcpStream,
-                     socket_options: &SocketOptions) -> io::Result<Framed<TcpStream, Codec>> {
+                     socket_options: &SocketOptions) -> io::Result<Framed<TcpStream, SizePayloadCodec>> {
     tcp_stream.write_all(&PIPELINE_HANDSHAKE_PACKET[..]).await?;
 
     socket_options.apply_to_tcpstream(&tcp_stream)?;
@@ -274,7 +275,7 @@ async fn accept_push(mut tcp_stream: TcpStream,
         return Err(io::Error::from(io::ErrorKind::InvalidData))
     }
 
-    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, Codec::new());
+    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, SizePayloadCodec::new());
 
     Ok(Framed::from_parts(framed_parts))
 }
