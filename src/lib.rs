@@ -2,13 +2,14 @@
 
 mod reply;
 mod pair;
-mod req;
+mod request;
 mod options;
 mod bus;
 mod reconnect;
+mod size_payload_codec;
+mod request_reply_codec;
 
 pub use crate::bus::NanomsgBus;
 pub use crate::reply::NanomsgReply;
-pub use crate::req::NanomsgRequest;
+pub use crate::request::NanomsgRequest;
 pub use crate::pair::NanomsgPair;
-

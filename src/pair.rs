@@ -2,12 +2,12 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use futures::{Sink, Stream, StreamExt};
 use std::{io, pin::Pin, task::{Poll, Context}};
-use bytes::{BytesMut, BufMut, Buf};
 use pin_project::*;
-use tokio_util::codec::{Encoder, Decoder, Framed};
+use tokio_util::codec::{Framed};
 use std::ops::Deref;
 use std::net::SocketAddr;
 use super::options::SocketOptions;
+use super::size_payload_codec::SizePayloadCodec;
 
 
 const PAIR_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x10, 0x00, 0x00];
@@ -15,7 +15,7 @@ const PAIR_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x10, 0x0
 #[pin_project]
 pub struct NanomsgPair {
     #[pin]
-    inner : tokio_util::codec::Framed<TcpStream, NanomsgPairCodec>
+    inner : tokio_util::codec::Framed<TcpStream, SizePayloadCodec>
 }
 
 impl NanomsgPair {
@@ -41,7 +41,7 @@ impl NanomsgPair {
             return Err(io::Error::from(io::ErrorKind::InvalidData))
         }
 
-        let codec = NanomsgPairCodec::new();
+        let codec = SizePayloadCodec::new();
 
         let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(tcp_stream, codec);
         let framed = Framed::from_parts(framed_parts);
@@ -67,7 +67,7 @@ impl NanomsgPair {
             if incoming_handshake != PAIR_HANDSHAKE_PACKET {
                 return Err(io::Error::from(io::ErrorKind::InvalidData))
             }
-            let codec = NanomsgPairCodec::new();
+            let codec = SizePayloadCodec::new();
 
             let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(stream, codec);
             let framed = Framed::from_parts(framed_parts);
@@ -102,7 +102,7 @@ impl <I> Sink<I> for NanomsgPair
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, NanomsgPairCodec> as Sink<I>>::poll_ready(this.inner, cx)
+        <Framed<TcpStream, SizePayloadCodec> as Sink<I>>::poll_ready(this.inner, cx)
     }
 
     fn start_send(self: Pin<&mut Self>, item: I) -> Result<(), Self::Error> {
@@ -115,7 +115,7 @@ impl <I> Sink<I> for NanomsgPair
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, NanomsgPairCodec> as Sink<I>>::poll_flush(this.inner, cx)
+        <Framed<TcpStream, SizePayloadCodec> as Sink<I>>::poll_flush(this.inner, cx)
     }
 
     fn poll_close(
@@ -123,67 +123,6 @@ impl <I> Sink<I> for NanomsgPair
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, NanomsgPairCodec> as Sink<I>>::poll_close(this.inner, cx)
+        <Framed<TcpStream, SizePayloadCodec> as Sink<I>>::poll_close(this.inner, cx)
     }
 }
-
-enum DecodingState {
-    Size,
-    Payload(usize)
-}
-
-struct NanomsgPairCodec {
-    decoding_state: DecodingState,
-}
-
-impl NanomsgPairCodec {
-    pub fn new() -> Self {
-        Self {
-            decoding_state: DecodingState::Size,
-        }
-    }
-}
-
-impl <T>Encoder<T> for NanomsgPairCodec 
-    where T: std::ops::Deref<Target = [u8]> {
-    type Error = io::Error;
-
-    fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.reserve(item.len() + 8);
-        dst.put_u64(item.len() as _);
-        dst.put(item.as_ref());
-        Ok(())
-    }
-}
-
-impl Decoder for NanomsgPairCodec {
-    type Item = Vec<u8>;
-    type Error = io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        use std::mem::replace;
-
-        loop {
-            match self.decoding_state {
-                DecodingState::Size => {
-                    if src.remaining() >= 8 {
-                        let size = src.get_u64() as _;
-                        let _ = replace(&mut self.decoding_state, DecodingState::Payload(size));
-                    } else {
-                        return Ok(None)
-                    }
-                }
-                DecodingState::Payload(size) => {
-                    if src.remaining() >= size {
-                        let payload = src.split_to(size);
-                        let _ = replace(&mut self.decoding_state, DecodingState::Size);
-                        return Ok(Some(payload.to_vec()))
-                    } else {
-                        return Ok(None)
-                    }
-                }
-            }
-        }
-    }
-}
-
