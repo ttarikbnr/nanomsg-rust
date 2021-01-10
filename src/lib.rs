@@ -7,6 +7,8 @@ mod options;
 mod bus;
 mod reconnect;
 mod pipeline;
+mod codec;
+mod req_reply_codec;
 
 pub use crate::bus::NanomsgBus;
 pub use crate::reply::NanomsgReply;

@@ -2,14 +2,14 @@ use std::{pin::Pin, task::{Poll, Context}, io, sync::Arc, ops::Deref};
 use futures::{Sink, Stream, StreamExt, SinkExt};
 use tokio::net::{TcpStream, TcpListener, ToSocketAddrs};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_util::codec::{Encoder, Decoder, Framed, FramedParts};
+use tokio_util::codec::{Framed, FramedParts};
 use tokio::time::sleep;
 use tokio::sync::mpsc::{unbounded_channel,
                         UnboundedReceiver,
                         UnboundedSender};
 use tokio::sync::broadcast;
+use super::codec::Codec;
                     
-use bytes::{BytesMut, BufMut, Buf};
 use pin_project::*;
 
 use crate::options::SocketOptions;
@@ -152,7 +152,7 @@ impl NanomsgBusListener {
 
 
 // If address is None the socket won't try to reconnect
-fn spawn_socket<A>(framed           : Framed<TcpStream, NanomsgBusCodec>,
+fn spawn_socket<A>(framed           : Framed<TcpStream, Codec>,
                    rx_channel       : UnboundedSender<Vec<u8>>,
                    broadcaster      : broadcast::Sender<Arc<Vec<u8>>>,
                    socket_options   : SocketOptions,
@@ -197,7 +197,7 @@ fn spawn_socket<A>(framed           : Framed<TcpStream, NanomsgBusCodec>,
 }
 
 async fn connect<A>(address         : &A,
-                    socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, NanomsgBusCodec>> 
+                    socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, Codec>> 
     where A: ToSocketAddrs  {
 
     let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
@@ -215,13 +215,13 @@ async fn connect<A>(address         : &A,
         return Err(io::Error::from(io::ErrorKind::InvalidData))
     }
 
-    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, NanomsgBusCodec::new());
+    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, Codec::new());
 
     Ok(Framed::from_parts(framed_parts))
 }
 
 async fn accept(mut tcp_stream   : TcpStream,
-                socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, NanomsgBusCodec>> {
+                socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, Codec>> {
     tcp_stream.write_all(&BUS_HANDSHAKE_PACKET[..]).await?;
 
     socket_options.apply_to_tcpstream(&tcp_stream)?;
@@ -233,20 +233,20 @@ async fn accept(mut tcp_stream   : TcpStream,
         return Err(io::Error::from(io::ErrorKind::InvalidData))
     }
 
-    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, NanomsgBusCodec::new());
+    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, Codec::new());
 
     Ok(Framed::from_parts(framed_parts))
 }
 
 
 struct NanomsgBusSocket {
-    framed              : Framed<TcpStream, NanomsgBusCodec>,
+    framed              : Framed<TcpStream, Codec>,
     rx_channel          : UnboundedSender<Vec<u8>>,
     tx_channel          : broadcast::Receiver<Arc<Vec<u8>>>
 }
 
 impl NanomsgBusSocket {
-    fn new(framed           : Framed<TcpStream, NanomsgBusCodec>,
+    fn new(framed           : Framed<TcpStream, Codec>,
            rx_channel       : UnboundedSender<Vec<u8>>,
            tx_channel       : broadcast::Receiver<Arc<Vec<u8>>>) -> Self {
 
@@ -338,65 +338,3 @@ impl <I> Sink<I> for NanomsgBus
         Poll::Ready(Ok(())) // TODO
     }
 }
-
-
-enum DecodingState {
-    Size,
-    Payload(usize)
-}
-
-struct NanomsgBusCodec {
-    decoding_state: DecodingState,
-}
-
-impl NanomsgBusCodec {
-    pub fn new() -> Self {
-        Self {
-            decoding_state: DecodingState::Size,
-        }
-    }
-}
-
-impl <T>Encoder<T> for NanomsgBusCodec 
-    where T: std::ops::Deref<Target = [u8]> {
-    type Error = io::Error;
-
-    fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.reserve(item.len() + 8);
-        dst.put_u64(item.len() as _);
-        dst.put(item.as_ref());
-        Ok(())
-    }
-}
-
-impl Decoder for NanomsgBusCodec {
-    type Item = Vec<u8>;
-    type Error = io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        use std::mem::replace;
-
-        loop {
-            match self.decoding_state {
-                DecodingState::Size => {
-                    if src.remaining() >= 8 {
-                        let size = src.get_u64() as _;
-                        let _ = replace(&mut self.decoding_state, DecodingState::Payload(size));
-                    } else {
-                        return Ok(None)
-                    }
-                }
-                DecodingState::Payload(size) => {
-                    if src.remaining() >= size {
-                        let payload = src.split_to(size);
-                        let _ = replace(&mut self.decoding_state, DecodingState::Size);
-                        return Ok(Some(payload.to_vec()))
-                    } else {
-                        return Ok(None)
-                    }
-                }
-            }
-        }
-    }
-}
-

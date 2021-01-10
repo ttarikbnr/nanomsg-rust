@@ -1,4 +1,3 @@
-use crate::options::SocketOptions;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::{oneshot, mpsc};
 use tokio::prelude::*;
@@ -8,10 +7,11 @@ use std::task::Poll;
 use std::future::Future;
 use std::sync::Arc;
 use futures::{Sink, Stream, future};
-use bytes::{BytesMut, Buf, BufMut};
 use std::collections::HashMap;
-use tokio_util::codec::{Encoder, Decoder, Framed};
+use tokio_util::codec::Framed;
 use pin_project::*;
+use super::options::SocketOptions;
+use super::req_reply_codec::RequestReplyCodec;
 
 const REP_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x31, 0x00, 0x00];
 const REQ_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x30, 0x00, 0x00];
@@ -274,7 +274,7 @@ fn advance_request_id(request_id: &mut u32) {
 #[pin_project]
 struct NanomsgRequestSocket {
     #[pin]
-    inner           : tokio_util::codec::Framed<TcpStream, NanomsgRequestCodec>,
+    inner           : tokio_util::codec::Framed<TcpStream, RequestReplyCodec>,
 }
 
 impl NanomsgRequestSocket {
@@ -287,7 +287,7 @@ impl NanomsgRequestSocket {
         tokio::time::timeout(socket_options.get_connect_timeout(),
                              handshake(&mut tcp_stream)).await??;
 
-        let framed_parts = tokio_util::codec::FramedParts::new::<(u32, &[u8])>(tcp_stream, NanomsgRequestCodec::new());
+        let framed_parts = tokio_util::codec::FramedParts::new::<(u32, &[u8])>(tcp_stream, RequestReplyCodec::new());
         let framed = Framed::from_parts(framed_parts);
         Ok(Self {
             inner: framed,
@@ -318,7 +318,7 @@ impl <I> Sink<(u32, I)> for NanomsgRequestSocket
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, NanomsgRequestCodec> as Sink<(u32, I)>>::poll_ready(this.inner, cx)
+        <Framed<TcpStream, RequestReplyCodec> as Sink<(u32, I)>>::poll_ready(this.inner, cx)
     }
 
     fn start_send(self: Pin<&mut Self>, item: (u32, I)) -> Result<(), Self::Error> {
@@ -331,7 +331,7 @@ impl <I> Sink<(u32, I)> for NanomsgRequestSocket
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, NanomsgRequestCodec> as Sink<(u32, I)>>::poll_flush(this.inner, cx)
+        <Framed<TcpStream, RequestReplyCodec> as Sink<(u32, I)>>::poll_flush(this.inner, cx)
     }
 
     fn poll_close(
@@ -339,81 +339,6 @@ impl <I> Sink<(u32, I)> for NanomsgRequestSocket
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, NanomsgRequestCodec> as Sink<(u32, I)>>::poll_close(this.inner, cx)
-    }
-}
-
-
-
-enum DecodingState {
-    Size,
-    RequestId(usize),
-    Payload(u32, usize)
-}
-
-struct NanomsgRequestCodec {
-    decoding_state  : DecodingState
-}
-
-impl NanomsgRequestCodec {
-    pub fn new() -> Self {
-        Self {
-            decoding_state  : DecodingState::Size,
-        }
-    }
-
-}
-
-impl <T>Encoder<(u32, T)> for NanomsgRequestCodec 
-    where T: std::ops::Deref<Target = [u8]> {
-    type Error = std::io::Error;
-
-    fn encode(&mut self, item: (u32, T), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let payload_size = item.1.len() as u64;
-        dst.put_u64(payload_size + 4);
-        dst.put_u32(item.0 | 0x80000000);
-        dst.put(item.1.as_ref());
-        Ok(())
-    }
-}
-
-
-impl Decoder for NanomsgRequestCodec {
-    type Item = (u32, Vec<u8>);
-    type Error = std::io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-
-        use std::mem::replace;
-
-        loop {
-            match self.decoding_state {
-                DecodingState::Size => {
-                    if src.remaining() >= 8 {
-                        let size = src.get_u64() as usize;
-                        let _ = replace(&mut self.decoding_state, DecodingState::RequestId(size - 4));
-                    } else {
-                        return Ok(None)
-                    }
-                }
-                DecodingState::RequestId(payload_size) => {
-                    if src.remaining() >= 4 {
-                        let request_id = src.get_u32() & 0x7FFFFFFF;
-                        let _ = replace(&mut self.decoding_state, DecodingState::Payload(request_id, payload_size));
-                    } else {
-                        return Ok(None)
-                    }
-                }
-                DecodingState::Payload(request_id, payload_size) => {
-                    if src.remaining() >= payload_size {
-                        let payload = src.split_to(payload_size);
-                        let _ = replace(&mut self.decoding_state, DecodingState::Size);
-                        return Ok(Some((request_id, payload.to_vec())))
-                    } else {
-                        return Ok(None)
-                    }
-                }
-            }
-        }
+        <Framed<TcpStream, RequestReplyCodec> as Sink<(u32, I)>>::poll_close(this.inner, cx)
     }
 }
