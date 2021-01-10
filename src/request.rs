@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use tokio_util::codec::Framed;
 use pin_project::*;
 use super::options::SocketOptions;
-use super::req_reply_codec::RequestReplyCodec;
+use super::request_reply_codec::RequestReplyCodec;
 
 const REP_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x31, 0x00, 0x00];
 const REQ_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x30, 0x00, 0x00];

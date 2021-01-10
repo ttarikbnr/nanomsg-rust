@@ -6,11 +6,11 @@ enum DecodingState {
     Payload(usize)
 }
 
-pub struct Codec {
+pub struct SizePayloadCodec {
     decoding_state: DecodingState,
 }
 
-impl Codec {
+impl SizePayloadCodec {
     pub fn new() -> Self {
         Self {
             decoding_state: DecodingState::Size,
@@ -18,7 +18,7 @@ impl Codec {
     }
 }
 
-impl <T>Encoder<T> for Codec
+impl <T>Encoder<T> for SizePayloadCodec
     where T: std::ops::Deref<Target = [u8]> {
     type Error = std::io::Error;
 
@@ -30,7 +30,7 @@ impl <T>Encoder<T> for Codec
     }
 }
 
-impl Decoder for Codec {
+impl Decoder for SizePayloadCodec {
     type Item = Vec<u8>;
     type Error = std::io::Error;
 

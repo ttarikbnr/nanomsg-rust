@@ -8,7 +8,7 @@ use tokio_util::codec::Framed;
 use futures::{Sink, Stream};
 use pin_project::*;
 use super::options::SocketOptions;
-use super::req_reply_codec::RequestReplyCodec;
+use super::request_reply_codec::RequestReplyCodec;
 
 const HANDSHAKE_WRITE_TIMEOUT_MS : u64 = 250;
 const REP_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x31, 0x00, 0x00];

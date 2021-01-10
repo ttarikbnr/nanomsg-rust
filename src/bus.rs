@@ -8,7 +8,7 @@ use tokio::sync::mpsc::{unbounded_channel,
                         UnboundedReceiver,
                         UnboundedSender};
 use tokio::sync::broadcast;
-use super::codec::Codec;
+use super::size_payload_codec::SizePayloadCodec;
                     
 use pin_project::*;
 
@@ -152,7 +152,7 @@ impl NanomsgBusListener {
 
 
 // If address is None the socket won't try to reconnect
-fn spawn_socket<A>(framed           : Framed<TcpStream, Codec>,
+fn spawn_socket<A>(framed           : Framed<TcpStream, SizePayloadCodec>,
                    rx_channel       : UnboundedSender<Vec<u8>>,
                    broadcaster      : broadcast::Sender<Arc<Vec<u8>>>,
                    socket_options   : SocketOptions,
@@ -197,7 +197,7 @@ fn spawn_socket<A>(framed           : Framed<TcpStream, Codec>,
 }
 
 async fn connect<A>(address         : &A,
-                    socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, Codec>> 
+                    socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, SizePayloadCodec>> 
     where A: ToSocketAddrs  {
 
     let mut tcp_stream = tokio::net::TcpStream::connect(address).await?;
@@ -215,13 +215,13 @@ async fn connect<A>(address         : &A,
         return Err(io::Error::from(io::ErrorKind::InvalidData))
     }
 
-    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, Codec::new());
+    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, SizePayloadCodec::new());
 
     Ok(Framed::from_parts(framed_parts))
 }
 
 async fn accept(mut tcp_stream   : TcpStream,
-                socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, Codec>> {
+                socket_options  : &SocketOptions) -> io::Result<Framed<TcpStream, SizePayloadCodec>> {
     tcp_stream.write_all(&BUS_HANDSHAKE_PACKET[..]).await?;
 
     socket_options.apply_to_tcpstream(&tcp_stream)?;
@@ -233,20 +233,20 @@ async fn accept(mut tcp_stream   : TcpStream,
         return Err(io::Error::from(io::ErrorKind::InvalidData))
     }
 
-    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, Codec::new());
+    let framed_parts = FramedParts::new::<&[u8]>(tcp_stream, SizePayloadCodec::new());
 
     Ok(Framed::from_parts(framed_parts))
 }
 
 
 struct NanomsgBusSocket {
-    framed              : Framed<TcpStream, Codec>,
+    framed              : Framed<TcpStream, SizePayloadCodec>,
     rx_channel          : UnboundedSender<Vec<u8>>,
     tx_channel          : broadcast::Receiver<Arc<Vec<u8>>>
 }
 
 impl NanomsgBusSocket {
-    fn new(framed           : Framed<TcpStream, Codec>,
+    fn new(framed           : Framed<TcpStream, SizePayloadCodec>,
            rx_channel       : UnboundedSender<Vec<u8>>,
            tx_channel       : broadcast::Receiver<Arc<Vec<u8>>>) -> Self {
 

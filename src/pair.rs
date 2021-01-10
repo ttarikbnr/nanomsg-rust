@@ -7,7 +7,7 @@ use tokio_util::codec::{Framed};
 use std::ops::Deref;
 use std::net::SocketAddr;
 use super::options::SocketOptions;
-use super::codec::Codec;
+use super::size_payload_codec::SizePayloadCodec;
 
 
 const PAIR_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x10, 0x00, 0x00];
@@ -15,7 +15,7 @@ const PAIR_HANDSHAKE_PACKET : [u8; 8] = [0x00, 0x53, 0x50, 0x00, 0x00, 0x10, 0x0
 #[pin_project]
 pub struct NanomsgPair {
     #[pin]
-    inner : tokio_util::codec::Framed<TcpStream, Codec>
+    inner : tokio_util::codec::Framed<TcpStream, SizePayloadCodec>
 }
 
 impl NanomsgPair {
@@ -41,7 +41,7 @@ impl NanomsgPair {
             return Err(io::Error::from(io::ErrorKind::InvalidData))
         }
 
-        let codec = Codec::new();
+        let codec = SizePayloadCodec::new();
 
         let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(tcp_stream, codec);
         let framed = Framed::from_parts(framed_parts);
@@ -67,7 +67,7 @@ impl NanomsgPair {
             if incoming_handshake != PAIR_HANDSHAKE_PACKET {
                 return Err(io::Error::from(io::ErrorKind::InvalidData))
             }
-            let codec = Codec::new();
+            let codec = SizePayloadCodec::new();
 
             let framed_parts = tokio_util::codec::FramedParts::new::<&[u8]>(stream, codec);
             let framed = Framed::from_parts(framed_parts);
@@ -102,7 +102,7 @@ impl <I> Sink<I> for NanomsgPair
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, Codec> as Sink<I>>::poll_ready(this.inner, cx)
+        <Framed<TcpStream, SizePayloadCodec> as Sink<I>>::poll_ready(this.inner, cx)
     }
 
     fn start_send(self: Pin<&mut Self>, item: I) -> Result<(), Self::Error> {
@@ -115,7 +115,7 @@ impl <I> Sink<I> for NanomsgPair
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, Codec> as Sink<I>>::poll_flush(this.inner, cx)
+        <Framed<TcpStream, SizePayloadCodec> as Sink<I>>::poll_flush(this.inner, cx)
     }
 
     fn poll_close(
@@ -123,6 +123,6 @@ impl <I> Sink<I> for NanomsgPair
         cx: &mut Context<'_>
     ) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
-        <Framed<TcpStream, Codec> as Sink<I>>::poll_close(this.inner, cx)
+        <Framed<TcpStream, SizePayloadCodec> as Sink<I>>::poll_close(this.inner, cx)
     }
 }
